@@ -279,9 +279,3 @@ if st.button("Show Confusion Matrix"):
     sns.heatmap(cm, annot=True, fmt='d', cmap="Blues")
     st.pyplot(plt)
 
-#$env:NEWS_API_KEY="1d12e7f355e44ed88703c1a02632c68e"    
-#python -c "import requests; print(requests.get('https://newsapi.org/v2/top-headlines?country=in&apiKey=1d12e7f355e44ed88703c1a02632c68e').json())"
-#python -c "import os; print(os.getenv('NEWS_API_KEY'))"
-#python -c "from transformers import BertTokenizer, BertModel; BertTokenizer.from_pretrained('bert-base-uncased'); BertModel.from_pretrained('bert-base-uncased')"
-#python train_real.py
-#python -m streamlit run app.py
