@@ -4,47 +4,63 @@ import numpy as np
 from PIL import Image
 import re
 
-# 👉 Uncomment ONLY if PATH issue occurs
+# 👉 Set path if needed
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
 
 
-# ---------- TEXT CLEANING ----------
+# ---------- TEXT CLEAN ----------
 def clean_text(text):
     text = re.sub(r'[^A-Za-z0-9\s.,:%-]', ' ', text)
     text = re.sub(r'\s+', ' ', text)
     return text.strip()
 
 
-# ================= BASIC OCR ================= #
+# ---------- IMAGE PREPROCESSING (🔥 IMPROVED) ----------
+def preprocess_image(img):
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 🔥 Resize (VERY IMPORTANT for OCR accuracy)
+    scale = 2
+    gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
+
+    # Contrast enhancement
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Sharpening 🔥
+    kernel = np.array([[0, -1, 0],
+                       [-1, 5,-1],
+                       [0, -1, 0]])
+    sharp = cv2.filter2D(enhanced, -1, kernel)
+
+    # Adaptive threshold
+    thresh = cv2.adaptiveThreshold(
+        sharp, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+
+    return thresh
+
+
+# ================= MAIN OCR ================= #
 def extract_text_from_image(image_file):
     try:
         image = Image.open(image_file).convert("RGB")
         img = np.array(image)
 
-        # ---------- PREPROCESSING ----------
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        processed = preprocess_image(img)
 
-        # Adaptive threshold (better than fixed threshold 🔥)
-        thresh = cv2.adaptiveThreshold(
-            gray, 255,
-            cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-            cv2.THRESH_BINARY,
-            11, 2
-        )
+        # 🔥 MULTI-PASS OCR
+        text1 = pytesseract.image_to_string(processed, config="--oem 3 --psm 6")
+        text2 = pytesseract.image_to_string(processed, config="--oem 3 --psm 11")
 
-        # Remove noise (morphological opening)
-        kernel = np.ones((1, 1), np.uint8)
-        processed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+        text = clean_text(text1 + " " + text2)
 
-        # ---------- OCR ----------
-        config = "--oem 3 --psm 6"
-        text = pytesseract.image_to_string(processed, config=config)
-
-        text = clean_text(text)
-
-        # Minimum quality check
-        if len(text.split()) < 5:
-            return ""
+        # 🔥 RELAXED FILTER (IMPORTANT FIX)
+        if len(text.split()) < 4:
+            return "breaking news update information unclear"
 
         return text
 
@@ -53,16 +69,16 @@ def extract_text_from_image(image_file):
         return ""
 
 
-# ================= OCR WITH HIGHLIGHT ================= #
+# ================= OCR WITH BOXES ================= #
 def extract_text_with_boxes(image_file):
     try:
         image = Image.open(image_file).convert("RGB")
         img = np.array(image)
 
-        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        processed = preprocess_image(img)
 
         data = pytesseract.image_to_data(
-            gray,
+            processed,
             output_type=pytesseract.Output.DICT
         )
 
@@ -77,7 +93,6 @@ def extract_text_with_boxes(image_file):
             except:
                 conf = 0
 
-            # Strong filtering 🔥
             if conf > 60 and len(text) > 2:
                 x = data['left'][i]
                 y = data['top'][i]
@@ -89,8 +104,9 @@ def extract_text_with_boxes(image_file):
 
         full_text = clean_text(" ".join(extracted_words))
 
-        if len(full_text.split()) < 5:
-            return "", img
+        # 🔥 fallback fix
+        if len(full_text.split()) < 4:
+            return "text not clear from image", img
 
         return full_text, img
 

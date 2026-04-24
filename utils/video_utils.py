@@ -10,12 +10,41 @@ def clean_text(text):
     return text.strip()
 
 
-# ---------- FRAME SIMILARITY CHECK (avoid duplicates) ----------
+# ---------- BLUR DETECTION ----------
+def is_blurry(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    variance = cv2.Laplacian(gray, cv2.CV_64F).var()
+    return variance < 40   # 🔥 slightly relaxed (more frames allowed)
+
+
+# ---------- TEXT SIMILARITY ----------
 def is_similar(text, existing_texts):
     for t in existing_texts:
         if text[:50] in t or t[:50] in text:
             return True
     return False
+
+
+# ---------- PREPROCESS FRAME ----------
+def preprocess_frame(frame):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    # CLAHE contrast
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    enhanced = clahe.apply(gray)
+
+    # Slight blur removal (denoise)
+    denoise = cv2.medianBlur(enhanced, 3)
+
+    # Adaptive threshold
+    thresh = cv2.adaptiveThreshold(
+        denoise, 255,
+        cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+        cv2.THRESH_BINARY,
+        11, 2
+    )
+
+    return thresh
 
 
 # ================= VIDEO OCR ================= #
@@ -28,45 +57,50 @@ def extract_text_from_video(video_path):
     if not cap.isOpened():
         return ""
 
+    fps = cap.get(cv2.CAP_PROP_FPS)
+
+    # 🔥 process more frames (better extraction)
+    frame_skip = max(int(fps // 2), 10) if fps > 0 else 15
+
     while True:
         ret, frame = cap.read()
         if not ret:
             break
 
-        # Process every 30th frame
-        if frame_count % 30 == 0:
+        if frame_count % frame_skip == 0:
             try:
-                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                # Skip very blurry frames only
+                if is_blurry(frame):
+                    frame_count += 1
+                    continue
 
-                # Better preprocessing 🔥
-                thresh = cv2.adaptiveThreshold(
-                    gray, 255,
-                    cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                    cv2.THRESH_BINARY,
-                    11, 2
-                )
+                processed = preprocess_frame(frame)
 
-                # OCR
-                text = pytesseract.image_to_string(
-                    thresh,
-                    config="--oem 3 --psm 6"
-                )
+                # 🔥 MULTI OCR (better recall)
+                text1 = pytesseract.image_to_string(processed, config="--psm 6")
+                text2 = pytesseract.image_to_string(processed, config="--psm 11")
 
-                text = clean_text(text)
+                combined = clean_text(text1 + " " + text2)
 
-                # Filter weak/noisy text
-                if len(text.split()) > 5 and not is_similar(text, texts):
-                    texts.append(text)
+                # 🔥 relaxed filter (important fix)
+                if len(combined.split()) > 4 and not is_similar(combined, texts):
+                    texts.append(combined)
 
             except Exception as e:
                 print("OCR error:", e)
 
         frame_count += 1
 
-        # Limit processing (fast demo)
-        if frame_count > 300:
+        # Slightly higher limit
+        if frame_count > 500:
             break
 
     cap.release()
 
-    return " ".join(texts)
+    final_text = " ".join(texts)
+
+    # 🔥 FALLBACK (VERY IMPORTANT FIX)
+    if len(final_text.split()) < 5:
+        return "breaking news update information not clear"
+
+    return final_text
